@@ -1,0 +1,4 @@
+node_modules/
+
+generateDebts.js
+generateTransaction.js
