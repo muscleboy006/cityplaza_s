@@ -141,44 +141,6 @@ const createAccrual = async (req, res) => {
 
     console.log("Найден договор:", contract);
 
-    // Находим все существующие начисления за указанный год и месяц
-    const existingAccruals = await Accrual.find({
-      contractId,
-      year: parseInt(year),
-      month
-    });
-
-    console.log("Существующие начисления:", existingAccruals);
-
-    // Вычисляем общую сумму уже начисленного
-    const totalAccruedAmount = existingAccruals.reduce((sum, accrual) => {
-      return sum + (accrual.accrualAmount || 0);
-    }, 0);
-
-    // Вычисляем доступную сумму
-    const availableAmount = contract.contractAmount - totalAccruedAmount;
-
-    console.log("Расчеты:", {
-      contractAmount: contract.contractAmount,
-      totalAccruedAmount,
-      availableAmount,
-      requestedAmount: accrualAmount
-    });
-
-    // Проверяем, не превышает ли новое начисление доступную сумму
-    if (accrualAmount > availableAmount) {
-      return res.status(400).json({
-        success: false,
-        message: `Начисление не может превышать доступную сумму. Доступно: ${availableAmount.toLocaleString('ru-RU')}`,
-        data: {
-          contractAmount: contract.contractAmount,
-          totalAccruedAmount,
-          availableAmount,
-          requestedAmount: accrualAmount
-        }
-      });
-    }
-
     // Создаем начисление, если проверка прошла успешно
     const accrual = await Accrual.create(req.body);
     console.log("Создано начисление:", accrual);
@@ -230,36 +192,6 @@ const updateAccrual = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Договор не найден"
-      });
-    }
-
-    // Находим все начисления за этот год и месяц, кроме текущего редактируемого
-    const existingAccruals = await Accrual.find({
-      contractId,
-      year: parseInt(year),
-      month,
-      _id: { $ne: req.params.id }
-    });
-
-    // Считаем сумму уже начисленного (без текущего)
-    const totalAccruedAmount = existingAccruals.reduce((sum, accrual) => {
-      return sum + (accrual.accrualAmount || 0);
-    }, 0);
-
-    // Вычисляем доступную сумму
-    const availableAmount = contract.contractAmount - totalAccruedAmount;
-
-    // Проверяем, не превышает ли новое значение доступную сумму
-    if (accrualAmount > availableAmount) {
-      return res.status(400).json({
-        success: false,
-        message: `Начисление не может превышать доступную сумму. Доступно: ${availableAmount.toLocaleString('ru-RU')}`,
-        data: {
-          contractAmount: contract.contractAmount,
-          totalAccruedAmount,
-          availableAmount,
-          requestedAmount: accrualAmount
-        }
       });
     }
 

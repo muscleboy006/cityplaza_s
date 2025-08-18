@@ -7,7 +7,8 @@ const {
     addContract,
     updateContract,
     deleteContract,
-    searchContracts
+    searchContracts,
+    getStatistics
 } = require("../controllers/contractController");
 
 // POST — создать контракт
@@ -26,6 +27,8 @@ router.put("/contracts/:id", updateContract);
 router.delete("/contracts/:id", deleteContract);
 
 router.get("/search/contracts", searchContracts);
+
+router.get("/stats", getStatistics);
 
 
 module.exports = router;

@@ -27,73 +27,6 @@ const getAllContracts = async (req, res) => {
   }
 };
 
-// GET /contracts/:id — получить один контракт
-// const getOneContract = async (req, res) => {
-//   try {
-//     const limit = parseInt(req.query.limit) || 50;
-//     const page = parseInt(req.query.page) || 1;
-
-//     const contract = await Contract.findById(req.params.id);
-//     if (!contract) {
-//       return res.status(404).json({ success: false, message: "Contract not found" });
-//     }
-
-//     // Получаем платежи (accruals)
-//     const accruals = await Accrual.find({ contractId: req.params.id })
-//       .skip((page - 1) * limit)
-//       .limit(limit)
-//       .sort({ createdAt: -1 });
-
-//     const totalPayments = accruals.reduce((sum, acc) => sum + (acc.accrualAmount || 0), 0);
-
-//     let totalAccruals = 0;
-//     let debt = 0;
-
-//     const moveIn = new Date(contract.moveInDate);
-//     const today = new Date();
-
-//     // Если даты выезда нет или она в будущем — считаем начисления
-//     if (!contract.moveOutDate || new Date(contract.moveOutDate) >= today) {
-//       const end = contract.moveOutDate ? new Date(contract.moveOutDate) : today;
-
-//       // Разница в месяцах
-//       let monthsCount = (end.getFullYear() - moveIn.getFullYear()) * 12 + (end.getMonth() - moveIn.getMonth());
-
-//       // Если текущая дата >= дня въезда, считаем, что месяц полный и прибавляем 1
-//       if (end.getDate() >= moveIn.getDate()) {
-//         monthsCount += 1;
-//       }
-
-//       // Минимум 1 месяц, если уже заехал
-//       if (monthsCount < 1) monthsCount = 1;
-
-//       totalAccruals = monthsCount * (contract.contractAmount || 0);
-//       debt = totalAccruals - totalPayments;
-//     }
-
-//     res.status(200).json({
-//       success: true,
-//       data: {
-//         contract,
-//         accruals,
-//         totalAccruals,
-//         totalPayments,
-//         debt
-//       }
-//     });
-
-//     console.log(contract, accruals, totalAccruals, totalPayments, debt);
-
-//   } catch (error) {
-//     res.status(500).json({
-//       success: false,
-//       message: "Failed to fetch contract",
-//       error: error.message,
-//     });
-//   }
-// };
-
-
 const getOneContract = async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 50;
@@ -104,62 +37,62 @@ const getOneContract = async (req, res) => {
       return res.status(404).json({ success: false, message: "Contract not found" });
     }
 
-    // Получаем все платежи (accruals) без пагинации для правильного расчета долга
+    // Все начисления (без пагинации)
     const allAccruals = await Accrual.find({ contractId: req.params.id })
-      .sort({ year: 1, month: 1, createdAt: 1 }); // Сортируем по году, месяцу, дате создания
+      .sort({ year: 1, month: 1, createdAt: 1 });
 
-    // Получаем платежи для текущей страницы
+    // Пагинированные начисления
     const accruals = await Accrual.find({ contractId: req.params.id })
       .skip((page - 1) * limit)
       .limit(limit)
-      .sort({ createdAt: -1 }); // Для отображения - новые сверху
+      .sort({ createdAt: -1 });
 
+    // Общая сумма платежей
     const totalPayments = allAccruals.reduce((sum, acc) => sum + (acc.accrualAmount || 0), 0);
 
-    let totalAccruals = 0;
-    let debt = 0;
-
-    const moveIn = new Date(contract.moveInDate);
-    const today = new Date();
-
-    // Если даты выезда нет или она в будущем — считаем начисления
-    if (!contract.moveOutDate || new Date(contract.moveOutDate) >= today) {
-      const end = contract.moveOutDate ? new Date(contract.moveOutDate) : today;
-
-      // Разница в месяцах
-      let monthsCount = (end.getFullYear() - moveIn.getFullYear()) * 12 + (end.getMonth() - moveIn.getMonth());
-
-      // Если текущая дата >= дня въезда, считаем, что месяц полный и прибавляем 1
-      if (end.getDate() >= moveIn.getDate()) {
-        monthsCount += 1;
-      }
-
-      // Минимум 1 месяц, если уже заехал
-      if (monthsCount < 1) monthsCount = 1;
-
-      totalAccruals = monthsCount * (contract.contractAmount || 0);
-      debt = totalAccruals - totalPayments;
+    // ===== Новая система начислений по дням =====
+    function daysInMonth(year, month) {
+      return new Date(year, month + 1, 0).getDate();
     }
 
-    // Рассчитываем долг по месяцам
-    const accrualsWithMonthlyDebt = calculateMonthlyDebt(allAccruals, contract);
+    function calculateAccrual(moveInDate, moveOutDate, monthlyAmount) {
+      if (!moveInDate) return 0;
 
-    // Находим начисления для текущей страницы с рассчитанным долгом
-    const paginatedAccrualsWithDebt = accruals.map(accrual => {
-      const accrualWithDebt = accrualsWithMonthlyDebt.find(
-        acc => acc._id.toString() === accrual._id.toString()
-      );
-      return {
-        ...accrual.toObject(),
-        monthlyDebt: accrualWithDebt ? accrualWithDebt.monthlyDebt : 0
-      };
-    });
+      const today = new Date();
+      const start = new Date(moveInDate);
+      const end = moveOutDate ? new Date(moveOutDate) : today;
 
+      if (end < start) return 0;
+
+      if (start.getFullYear() === end.getFullYear() && start.getMonth() === end.getMonth()) {
+        return ((end.getDate() - start.getDate() + 1) / daysInMonth(start.getFullYear(), start.getMonth())) * monthlyAmount;
+      }
+
+      const fullMonths = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth()) - 1;
+
+      const firstMonthDays = daysInMonth(start.getFullYear(), start.getMonth());
+      const firstMonthAccrual = ((firstMonthDays - start.getDate() + 1) / firstMonthDays) * monthlyAmount;
+
+      const lastMonthDays = daysInMonth(end.getFullYear(), end.getMonth());
+      const lastMonthAccrual = (end.getDate() / lastMonthDays) * monthlyAmount;
+
+      return firstMonthAccrual + (fullMonths > 0 ? fullMonths * monthlyAmount : 0) + lastMonthAccrual;
+    }
+
+    const totalAccruals = calculateAccrual(
+      contract.moveInDate,
+      contract.moveOutDate,
+      contract.contractAmountMinus12 || 0
+    );
+
+    const debt = totalAccruals - totalPayments;
+
+    // Отправляем только общие данные, без помесячных долгов
     res.status(200).json({
       success: true,
       data: {
         contract,
-        accruals: paginatedAccrualsWithDebt,
+        accruals, // чистые платежи
         totalAccruals,
         totalPayments,
         debt
@@ -175,90 +108,8 @@ const getOneContract = async (req, res) => {
   }
 };
 
-// Функция для расчета долга по месяцам
-function calculateMonthlyDebt(allAccruals, contract) {
-  // Маппинг русских названий месяцев к номерам
-  const monthNameToNumber = {
-    'Январь': 1, 'Февраль': 2, 'Март': 3, 'Апрель': 4,
-    'Май': 5, 'Июнь': 6, 'Июль': 7, 'Август': 8,
-    'Сентябрь': 9, 'Октябрь': 10, 'Ноябрь': 11, 'Декабрь': 12
-  };
-
-  const numberToMonthName = {
-    1: 'Январь', 2: 'Февраль', 3: 'Март', 4: 'Апрель',
-    5: 'Май', 6: 'Июнь', 7: 'Июль', 8: 'Август',
-    9: 'Сентябрь', 10: 'Октябрь', 11: 'Ноябрь', 12: 'Декабрь'
-  };
-
-  const moveIn = new Date(contract.moveInDate);
-  const today = new Date();
-  const end = contract.moveOutDate ? new Date(contract.moveOutDate) : today;
-
-  // Создаем список месяцев от въезда до текущего момента/выезда
-  const months = [];
-  const current = new Date(moveIn.getFullYear(), moveIn.getMonth(), 1);
-  
-  while (current <= end) {
-    const monthNumber = current.getMonth() + 1;
-    months.push({
-      year: current.getFullYear(),
-      monthNumber: monthNumber,
-      monthName: numberToMonthName[monthNumber],
-      monthlyAccrual: contract.contractAmount || 0
-    });
-    current.setMonth(current.getMonth() + 1);
-  }
-
-  // Сортируем начисления по дате (конвертируем строковые месяцы в числа для сортировки)
-  const sortedAccruals = [...allAccruals].sort((a, b) => {
-    if (a.year !== b.year) return a.year - b.year;
-    
-    const monthA = typeof a.month === 'string' ? monthNameToNumber[a.month] : a.month;
-    const monthB = typeof b.month === 'string' ? monthNameToNumber[b.month] : b.month;
-    
-    if (monthA !== monthB) return monthA - monthB;
-    return new Date(a.createdAt) - new Date(b.createdAt);
-  });
-
-  // Распределяем платежи по месяцам в хронологическом порядке
-  let runningDebt = 0;
-  const monthlyDebts = new Map();
-
-  // Для каждого месяца рассчитываем накопленный долг
-  months.forEach(month => {
-    const monthKey = `${month.year}-${month.monthName}`;
-    
-    // Добавляем начисление за месяц
-    runningDebt += month.monthlyAccrual;
-    
-    // Вычитаем платежи за этот месяц
-    const paymentsThisMonth = sortedAccruals.filter(acc => {
-      const accMonth = typeof acc.month === 'string' ? acc.month : numberToMonthName[acc.month];
-      return acc.year === month.year && accMonth === month.monthName;
-    });
-    
-    paymentsThisMonth.forEach(payment => {
-      runningDebt -= payment.accrualAmount || 0;
-    });
-    
-    monthlyDebts.set(monthKey, runningDebt);
-  });
-
-  // Применяем рассчитанные долги к начислениям
-  return sortedAccruals.map(accrual => {
-    const accrualMonth = typeof accrual.month === 'string' ? accrual.month : numberToMonthName[accrual.month];
-    const monthKey = `${accrual.year}-${accrualMonth}`;
-    
-    return {
-      ...accrual.toObject(),
-      monthlyDebt: monthlyDebts.get(monthKey) || 0
-    };
-  });
-}
 
 
-
-// POST /contracts — создать контракт
 const addContract = async (req, res) => {
   try {
     const contract = await Contract.create(req.body);
@@ -346,6 +197,156 @@ const searchContracts = async (req, res) => {
   }
 };
 
+// GET /contracts/statistics?year=2025&month=8
+// const getStatistics = async (req, res) => {
+//   try {
+//     const { year, month } = req.query;
+
+//     // Общая площадь здания (задаём вручную или тянем из БД)
+//     const totalBuildingArea = 1000; // м² (поставь свою цифру)
+
+//     // Фильтр по начислениям
+//     let accrualFilter = {};
+//     if (year) accrualFilter.year = Number(year);
+//     if (month) accrualFilter.month = Number(month); // если у тебя месяц хранится как число
+
+//     // Получаем все начисления с фильтром
+//     const accruals = await Accrual.find(accrualFilter);
+
+//     const totalAccrualsAmount = accruals.reduce((sum, a) => sum + (a.accrualAmount || 0), 0);
+//     const totalPaymentsAmount = accruals.reduce((sum, a) => sum + (a.paymentAmount || 0), 0); // если есть поле paymentAmount
+//     const totalDebt = totalAccrualsAmount - totalPaymentsAmount;
+
+//     // Занятость здания
+//     const activeContractsFilter = {
+//       $or: [
+//         { moveOutDate: null },
+//         { moveOutDate: { $gte: new Date() } }
+//       ]
+//     };
+//     const activeContracts = await Contract.find(activeContractsFilter);
+
+//     const occupiedArea = activeContracts.reduce((sum, c) => {
+//       const numericArea = parseFloat(c.area); // "24 м²" → 24
+//       return sum + (isNaN(numericArea) ? 0 : numericArea);
+//     }, 0);
+
+//     const occupancyPercent = totalBuildingArea > 0
+//       ? ((occupiedArea / totalBuildingArea) * 100).toFixed(2)
+//       : 0;
+
+//     res.json({
+//       success: true,
+//       data: {
+//         year: year ? Number(year) : "all",
+//         month: month ? Number(month) : "all",
+//         totalDebt,
+//         totalPayments: totalPaymentsAmount,
+//         occupancy: {
+//           occupiedArea,
+//           totalBuildingArea,
+//           occupancyPercent
+//         }
+//       }
+//     });
+
+//   } catch (error) {
+//     console.error("Ошибка при получении статистики:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Failed to fetch statistics",
+//       error: error.message
+//     });
+//   }
+// };
+
+const getStatistics = async (req, res) => {
+  try {
+    const { year, month } = req.query;
+
+    // Общая площадь здания (можно вынести в ENV или БД)
+    const totalBuildingArea = 1000; // м²
+
+    // ---------- 1. Общий долг ----------
+    const allAccruals = await Accrual.find({});
+    const totalAccrualsAmount = allAccruals.reduce(
+      (sum, a) => sum + (a.accrualAmount || 0),
+      0
+    );
+    const totalPaymentsAmountAll = allAccruals.reduce(
+      (sum, a) => sum + (a.paymentAmount || 0),
+      0
+    );
+    const totalDebt = totalAccrualsAmount - totalPaymentsAmountAll;
+
+    // ---------- 2. Платежи за период ----------
+    let accrualFilter = {};
+    if (year) {
+      const y = Number(year);
+
+      let startDate = new Date(`${y}-01-01T00:00:00.000Z`);
+      let endDate;
+
+      if (month) {
+        // Если указан год + месяц → считаем до конца месяца включительно
+        const m = Number(month);
+        endDate = new Date(y, m, 0, 23, 59, 59, 999); // последний день месяца
+      } else {
+        // Если только год → берём весь год до декабря
+        endDate = new Date(y, 12, 31, 23, 59, 59, 999);
+      }
+
+      accrualFilter.date = { $gte: startDate, $lte: endDate };
+    }
+
+    const accrualsThisPeriod = await Accrual.find(accrualFilter);
+    const totalPaymentsThisPeriod = accrualsThisPeriod.reduce(
+      (sum, a) => sum + (a.paymentAmount || 0),
+      0
+    );
+
+    // ---------- 3. Занятость здания ----------
+    const activeContractsFilter = {
+      $or: [{ moveOutDate: null }, { moveOutDate: { $gte: new Date() } }],
+    };
+    const activeContracts = await Contract.find(activeContractsFilter);
+
+    const occupiedArea = activeContracts.reduce((sum, c) => {
+      const numericArea = parseFloat(c.area); // "24 м²" → 24
+      return sum + (isNaN(numericArea) ? 0 : numericArea);
+    }, 0);
+
+    const occupancyPercent =
+      totalBuildingArea > 0
+        ? ((occupiedArea / totalBuildingArea) * 100).toFixed(2)
+        : 0;
+
+    // ---------- Ответ ----------
+    res.json({
+      success: true,
+      data: {
+        year: year ? Number(year) : "all",
+        month: month ? Number(month) : "all",
+        totalDebt,
+        totalPaymentsThisPeriod,
+        occupancy: {
+          occupiedArea,
+          totalBuildingArea,
+          occupancyPercent,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Ошибка при получении статистики:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch statistics",
+      error: error.message,
+    });
+  }
+};
+
+
 
 module.exports = {
   getAllContracts,
@@ -354,4 +355,5 @@ module.exports = {
   updateContract,
   deleteContract,
   searchContracts,
+  getStatistics
 };
