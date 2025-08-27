@@ -2,24 +2,26 @@ const express = require("express");
 const router = express.Router();
 
 const {
-    getAllContracts,
-    getOneContract,
+    getAllContractsNotArch,
+    getAllContractsArch,
     addContract,
+    getOneContract,
     updateContract,
     deleteContract,
     searchContracts,
-    getStatistics
+    searchArchContracts,
+    getStatistics,
+    toggleArchive
 } = require("../controllers/contractController");
 
 // POST — создать контракт
 router.post("/contracts", addContract);
 
 // GET — получить все контракты
-router.get("/contracts", getAllContracts);
+router.get("/contracts", getAllContractsNotArch);
+router.get("/conarch", getAllContractsArch);
 
-// GET — получить контракт по ID
 router.get("/contracts/:id", getOneContract);
-
 // PUT — обновить контракт
 router.put("/contracts/:id", updateContract);
 
@@ -27,8 +29,11 @@ router.put("/contracts/:id", updateContract);
 router.delete("/contracts/:id", deleteContract);
 
 router.get("/search/contracts", searchContracts);
+router.get("/search/archconts", searchArchContracts);
 
 router.get("/stats", getStatistics);
+
+router.patch("/:id/toggle", toggleArchive);
 
 
 module.exports = router;

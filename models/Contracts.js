@@ -6,8 +6,10 @@ const officeContractSchema = new mongoose.Schema({
   area: { type: String, required: true }, // Квадратура (например, "24 м²")
   officeNumber: { type: String, required: true }, // Кабинет
   company: { type: String, required: true }, // Компания
+  link: { type: String }, // ССылка
   moveInDate: { type: Date, required: true }, // Дата въезда
   moveOutDate: { type: Date }, // Дата выезда
+  isArchive: { type: Boolean, default: false },
   contractAmount: { type: Number, required: true }, // Сумма по договору
   contractAmountMinus12: { type: Number, required: true }, // Сумма (-12%)
 }, {

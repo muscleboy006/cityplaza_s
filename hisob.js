@@ -21,9 +21,18 @@ app.use(express.urlencoded({ extended: true }));
 
 // Routes
 app.use('/tg', require('./routes/auth'));
+app.use("/uploads", express.static("uploads"));
+
 // Подключаем роут
 app.use("/con", require('./routes/contractRoute'));
 app.use('/acc', require('./routes/accrualRoute'))
+
+//Elektr, suv, gas, tax
+app.use('/elc', require('./routes/electrcyRoute'))
+app.use('/suv', require('./routes/suvRoute'))
+app.use('/gas', require('./routes/gasRoute'))
+app.use('/tax', require('./routes/taxRoute'))
+app.use('/man', require('./routes/mancomRoute'))
 
 // Test routes
 app.get('/', (req, res) => {
