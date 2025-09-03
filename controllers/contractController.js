@@ -597,93 +597,6 @@ const searchArchContracts = async (req, res) => {
 };
 
 
-// GET /contracts/statistics?year=2025&month=8
-const getStatistics = async (req, res) => {
-  try {
-    const { year, month } = req.query;
-
-    // Общая площадь здания (можно вынести в ENV или БД)
-    const totalBuildingArea = 1000; // м²
-
-    // ---------- 1. Общий долг ----------
-    const allAccruals = await Accrual.find({});
-    const totalAccrualsAmount = allAccruals.reduce(
-      (sum, a) => sum + (a.accrualAmount || 0),
-      0
-    );
-    const totalPaymentsAmountAll = allAccruals.reduce(
-      (sum, a) => sum + (a.paymentAmount || 0),
-      0
-    );
-    const totalDebt = totalAccrualsAmount - totalPaymentsAmountAll;
-
-    // ---------- 2. Платежи за период ----------
-    let accrualFilter = {};
-    if (year) {
-      const y = Number(year);
-
-      let startDate = new Date(`${y}-01-01T00:00:00.000Z`);
-      let endDate;
-
-      if (month) {
-        // Если указан год + месяц → считаем до конца месяца включительно
-        const m = Number(month);
-        endDate = new Date(y, m, 0, 23, 59, 59, 999); // последний день месяца
-      } else {
-        // Если только год → берём весь год до декабря
-        endDate = new Date(y, 12, 31, 23, 59, 59, 999);
-      }
-
-      accrualFilter.date = { $gte: startDate, $lte: endDate };
-    }
-
-    const accrualsThisPeriod = await Accrual.find(accrualFilter);
-    const totalPaymentsThisPeriod = accrualsThisPeriod.reduce(
-      (sum, a) => sum + (a.paymentAmount || 0),
-      0
-    );
-
-    // ---------- 3. Занятость здания ----------
-    const activeContractsFilter = {
-      $or: [{ moveOutDate: null }, { moveOutDate: { $gte: new Date() } }],
-    };
-    const activeContracts = await Contract.find(activeContractsFilter);
-
-    const occupiedArea = activeContracts.reduce((sum, c) => {
-      const numericArea = parseFloat(c.area); // "24 м²" → 24
-      return sum + (isNaN(numericArea) ? 0 : numericArea);
-    }, 0);
-
-    const occupancyPercent =
-      totalBuildingArea > 0
-        ? ((occupiedArea / totalBuildingArea) * 100).toFixed(2)
-        : 0;
-
-    // ---------- Ответ ----------
-    res.json({
-      success: true,
-      data: {
-        year: year ? Number(year) : "all",
-        month: month ? Number(month) : "all",
-        totalDebt,
-        totalPaymentsThisPeriod,
-        occupancy: {
-          occupiedArea,
-          totalBuildingArea,
-          occupancyPercent,
-        },
-      },
-    });
-  } catch (error) {
-    console.error("Ошибка при получении статистики:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch statistics",
-      error: error.message,
-    });
-  }
-};
-
 const toggleArchive = async (req, res) => {
   try {
     const { id } = req.params;
@@ -709,6 +622,245 @@ const toggleArchive = async (req, res) => {
   }
 };
 
+// Маппинг числовых месяцев на строковые названия
+const monthNameMap = {
+  1: "Январь",
+  2: "Февраль",
+  3: "Март",
+  4: "Апрель",
+  5: "Май",
+  6: "Июнь",
+  7: "Июль",
+  8: "Август",
+  9: "Сентябрь",
+  10: "Октябрь",
+  11: "Ноябрь",
+  12: "Декабрь"
+};
+
+// Обновленная функция calculateAccrual для поддержки строковых месяцев
+function calculateAccrual(moveInDate, moveOutDate, monthlyAmount, filterYear = null, filterMonth = null) {
+  if (!moveInDate) return 0;
+
+  const today = new Date();
+  let start = new Date(moveInDate);
+  let end = moveOutDate ? new Date(moveOutDate) : today;
+
+  if (filterYear) {
+    // Если filterMonth передан как число, преобразуем в строковое название
+    const monthName = typeof filterMonth === 'number' ? monthNameMap[filterMonth] : filterMonth;
+    let periodStart = new Date(filterYear, 0, 1);
+    let periodEnd = new Date(filterYear + 1, 0, 1);
+
+    if (monthName) {
+      const monthIndex = Object.values(monthNameMap).indexOf(monthName);
+      if (monthIndex === -1) return 0; // Неверное название месяца
+      periodStart = new Date(filterYear, monthIndex, 1);
+      periodEnd = new Date(filterYear, monthIndex + 1, 1);
+    }
+
+    if (start >= periodEnd || end < periodStart) return 0;
+
+    start = start < periodStart ? periodStart : start;
+    end = end > periodEnd ? new Date(periodEnd.getTime() - 1) : end;
+  }
+
+  if (end < start) return 0;
+
+  if (start.getFullYear() === end.getFullYear() && start.getMonth() === end.getMonth()) {
+    return ((end.getDate() - start.getDate() + 1) / daysInMonth(start.getFullYear(), start.getMonth())) * monthlyAmount;
+  }
+
+  const fullMonths = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth()) - 1;
+
+  const firstMonthDays = daysInMonth(start.getFullYear(), start.getMonth());
+  const firstMonthAccrual = ((firstMonthDays - start.getDate() + 1) / firstMonthDays) * monthlyAmount;
+
+  const lastMonthDays = daysInMonth(end.getFullYear(), end.getMonth());
+  const lastMonthAccrual = (end.getDate() / lastMonthDays) * monthlyAmount;
+
+  return firstMonthAccrual + (fullMonths > 0 ? fullMonths * monthlyAmount : 0) + lastMonthAccrual;
+}
+
+const getOldestMonth = async (req, res) => {
+  try {
+    // Находим самый старый контракт по moveInDate
+    const oldestContract = await Contract.findOne(
+      { moveInDate: { $exists: true, $ne: null } },
+      { moveInDate: 1 }
+    ).sort({ moveInDate: 1 });
+
+    // Находим самое старое начисление по году и месяцу
+    const oldestAccrual = await Accrual.findOne(
+      { year: { $exists: true, $ne: null }, month: { $exists: true, $ne: null } },
+      { year: 1, month: 1 }
+    ).sort({ year: 1 }); // Сортируем только по году, так как месяц строка
+
+    let oldestYear = null;
+    let oldestMonth = null;
+
+    // Определяем самый старый год и месяц из контрактов
+    if (oldestContract && oldestContract.moveInDate) {
+      const contractDate = new Date(oldestContract.moveInDate);
+      oldestYear = contractDate.getFullYear();
+      oldestMonth = contractDate.getMonth() + 1; // Месяц в JS начинается с 0, добавляем 1
+    }
+
+    // Сравниваем с начислениями, если они есть
+    if (oldestAccrual && oldestAccrual.year && oldestAccrual.month) {
+      const accrualYear = oldestAccrual.year;
+      const monthIndex = Object.values(monthNameMap).indexOf(oldestAccrual.month) + 1;
+
+      // Проверяем, является ли начисление более старым
+      if (
+        !oldestYear ||
+        accrualYear < oldestYear ||
+        (accrualYear === oldestYear && monthIndex < oldestMonth)
+      ) {
+        oldestYear = accrualYear;
+        oldestMonth = monthIndex;
+      }
+    }
+
+    if (!oldestYear || !oldestMonth) {
+      return res.status(404).json({
+        success: false,
+        message: "No contracts or accruals found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        year: oldestYear,
+        month: oldestMonth,
+        monthName: monthNameMap[oldestMonth],
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch oldest month",
+      error: error.message,
+    });
+  }
+};
+
+// Новый endpoint для статистики
+const getStatistics = async (req, res) => {
+  try {
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth() + 1; // JS month 0-11
+    const prevMonth = currentMonth === 1 ? 12 : currentMonth - 1;
+    const prevMonthYear = currentMonth === 1 ? currentYear - 1 : currentYear;
+
+    // --- Функция безопасного парсинга площади ---
+    const parseArea = (val) => {
+      if (val == null) return 0;
+      if (typeof val === "number" && !isNaN(val)) return val;
+      if (typeof val === "string") {
+        const cleaned = val.trim().replace(",", ".").replace(/[^\d.]/g, "");
+        const n = parseFloat(cleaned);
+        return isNaN(n) ? 0 : n;
+      }
+      const n = Number(val);
+      return isNaN(n) ? 0 : n;
+    };
+
+    // --- 1) Занятость здания ---
+    const activeContracts = await Contract.find({
+      isArchive: { $ne: true },
+      $or: [
+        { moveOutDate: null },
+        { moveOutDate: { $gte: now } },
+      ],
+    }).select("_id company area moveOutDate isArchive");
+
+    let occupiedArea = 0;
+    for (const c of activeContracts) {
+      occupiedArea += parseArea(c.area);
+    }
+
+    const totalArea = 1000; // TODO: вынести в настройки
+    occupiedArea = Number(occupiedArea.toFixed(2));
+    const occupancyPercentage = Number(((occupiedArea / totalArea) * 100).toFixed(2));
+
+    // --- 2) Общий долг арендаторов ---
+    const allContracts = await Contract.find().select(
+      "_id moveInDate moveOutDate contractAmountMinus12"
+    );
+
+    let totalDebt = 0;
+    for (const contract of allContracts) {
+      const accrualsToDate = await Accrual.find({
+        contractId: contract._id,
+        $or: [
+          { year: { $lt: currentYear } },
+          { year: currentYear, month: { $lte: currentMonth } },
+        ],
+      });
+
+      const paidToDate = accrualsToDate.reduce(
+        (s, a) => s + (parseFloat(a.accrualAmount) || 0),
+        0
+      );
+
+      const expectedToNow = calculateAccrual(
+        contract.moveInDate,
+        contract.moveOutDate,
+        contract.contractAmountMinus12 || 0,
+        null,
+        null
+      );
+
+      totalDebt += expectedToNow - paidToDate;
+    }
+    totalDebt = Number(totalDebt.toFixed(2));
+
+    // --- 3) Платежи за прошлый месяц ---
+    const accrualsPrevMonth = await Accrual.find({
+      year: prevMonthYear,
+      month: monthNameMap[prevMonth],
+    });
+    const paymentsPrevMonth = accrualsPrevMonth.reduce(
+      (s, a) => s + (parseFloat(a.accrualAmount) || 0),
+      0
+    );
+
+    // --- 4) Платежи за текущий год ---
+    const accrualsThisYear = await Accrual.find({ year: currentYear });
+    const paymentsThisYear = accrualsThisYear.reduce(
+      (s, a) => s + (parseFloat(a.accrualAmount) || 0),
+      0
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        totalDebt,
+        payments: {
+          prevMonth: Number(paymentsPrevMonth.toFixed(2)),
+          thisYear: Number(paymentsThisYear.toFixed(2)),
+        },
+        occupancy: {
+          occupiedArea,
+          totalBuildingArea: totalArea,
+          occupancyPercentage,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("getStatistics error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch statistics",
+      error: error.message,
+    });
+  }
+};
+
+
 
 module.exports = {
   getAllContractsNotArch,
@@ -719,6 +871,7 @@ module.exports = {
   deleteContract,
   searchContracts,
   searchArchContracts,
+  toggleArchive,
   getStatistics,
-  toggleArchive
+  getOldestMonth
 };

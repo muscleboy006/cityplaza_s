@@ -12,6 +12,7 @@ const {
   editPayment,
   deletePayment,
   deleteTax,
+  getTotalDebt
 } = require("../controllers/taxController");
 
 // Multer config
@@ -24,6 +25,7 @@ const upload = multer({ storage });
 // Роуты
 router.post("/", createTax);
 router.get("/", getAllTax);
+router.get("/debt", getTotalDebt);
 router.get("/:id", getOneTax);
 router.put("/:id", updateTax);
 router.put("/:id/add-payment", upload.array("images", 15), addPayment);

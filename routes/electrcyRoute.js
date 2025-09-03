@@ -13,6 +13,7 @@ const {
   editPayment,
   deletePayment,
   deleteElectrcy,
+  getTotalDebt,
 } = require("../controllers/electrcyController");
 
 // Multer config
@@ -26,6 +27,7 @@ const upload = multer({ storage });
 router.post("/", createElectrcy);
 router.get("/", getAllElectrcy);
 router.get("/cons", getAllContracts);
+router.get("/debt", getTotalDebt);
 router.get("/:id", getOneElectrcy);
 router.put("/:id", updateElectrcy);
 router.put("/:id/add-payment", upload.array("images", 15), addPayment);

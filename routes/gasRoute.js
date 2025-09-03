@@ -13,6 +13,7 @@ const {
   editPayment,
   deletePayment,
   deleteGas,
+  getTotalDebt
 } = require("../controllers/gasController");
 
 // Multer config
@@ -26,6 +27,7 @@ const upload = multer({ storage });
 router.post("/", createGas);
 router.get("/", getAllGas);
 router.get("/cons", getAllContracts);
+router.get("/debt", getTotalDebt);
 router.get("/:id", getOneGas);
 router.put("/:id", updateGas);
 router.put("/:id/add-payment", upload.array("images", 15), addPayment);

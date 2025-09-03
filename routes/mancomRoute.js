@@ -5,13 +5,15 @@ const {
   getOneMancom,
   addMancom,
   editMancom,
-  delMancom
+  delMancom,
+  getDebtMancom
 } = require("../controllers/mancomController");
 
 // ✅ Получить расчет по компаниям + все записи
 router.get("/", getAllMancom);
 
 // ✅ Получить одну запись по ID
+router.get("/debt", getDebtMancom);
 router.get("/:id", getOneMancom);
 
 // ✅ Добавить запись

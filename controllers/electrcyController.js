@@ -394,6 +394,37 @@ const deleteElectrcy = async (req, res) => {
   }
 };
 
+// ✅ Получить общий долг
+const getTotalDebt = async (req, res) => {
+  try {
+    // Получаем все документы
+    const records = await Electrcy.find();
+
+    // Суммируем totalElectrcy
+    const totalElectrcy = records.reduce((sum, rec) => sum + (rec.totalElectrcy || 0), 0);
+
+    // Суммируем все оплаты
+    const totalPayments = records.reduce((sum, rec) => {
+      const paymentsSum = (rec.paymentAmount || []).reduce((s, p) => s + (p.amount || 0), 0);
+      return sum + paymentsSum;
+    }, 0);
+
+    // Долг = totalElectrcy - totalPayments
+    const totalDebt = totalElectrcy - totalPayments;
+
+    res.status(200).json({
+      message: "Общий долг успешно рассчитан",
+      totalElectrcy,
+      totalPayments,
+      totalDebt,
+    });
+  } catch (error) {
+    console.error("Ошибка при расчёте общего долга:", error);
+    res.status(500).json({ message: "Ошибка при расчёте общего долга", error: error.message });
+  }
+};
+
+
 module.exports = {
   createElectrcy,
   getOneElectrcy,
@@ -405,4 +436,5 @@ module.exports = {
   editPayment,
   deletePayment,
   deleteElectrcy,
+  getTotalDebt
 };

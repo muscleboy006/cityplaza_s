@@ -13,6 +13,7 @@ const {
   editPayment,
   deletePayment,
   deleteSuv,
+  getTotalDebt
 } = require("../controllers/suvController");
 
 // Multer config
@@ -26,6 +27,7 @@ const upload = multer({ storage });
 router.post("/", createSuv);
 router.get("/", getAllSuv);
 router.get("/cons", getAllContracts);
+router.get("/debt", getTotalDebt);
 router.get("/:id", getOneSuv);
 router.put("/:id", updateSuv);
 router.put("/:id/add-payment", upload.array("images", 15), addPayment);

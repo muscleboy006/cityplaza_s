@@ -293,6 +293,36 @@ const deleteTax = async (req, res) => {
   }
 };
 
+// ✅ Получить общий долг
+const getTotalDebt = async (req, res) => {
+  try {
+    // Получаем все документы
+    const records = await Tax.find();
+
+    // Суммируем totalTax
+    const totalTax = records.reduce((sum, rec) => sum + (rec.totalTax || 0), 0);
+
+    // Суммируем все оплаты
+    const totalPayments = records.reduce((sum, rec) => {
+      const paymentsSum = (rec.paymentAmount || []).reduce((s, p) => s + (p.amount || 0), 0);
+      return sum + paymentsSum;
+    }, 0);
+
+    // Долг = totalTax - totalPayments
+    const totalDebt = totalTax - totalPayments;
+
+    res.status(200).json({
+      message: "Общий долг успешно рассчитан",
+      totalTax,
+      totalPayments,
+      totalDebt,
+    });
+  } catch (error) {
+    console.error("Ошибка при расчёте общего долга:", error);
+    res.status(500).json({ message: "Ошибка при расчёте общего долга", error: error.message });
+  }
+};
+
 module.exports = {
   createTax,
   getOneTax,
@@ -303,4 +333,5 @@ module.exports = {
   editPayment,
   deletePayment,
   deleteTax,
+  getTotalDebt
 };

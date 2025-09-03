@@ -10,8 +10,9 @@ const {
     deleteContract,
     searchContracts,
     searchArchContracts,
+    toggleArchive,
     getStatistics,
-    toggleArchive
+    getOldestMonth
 } = require("../controllers/contractController");
 
 // POST — создать контракт
@@ -31,9 +32,10 @@ router.delete("/contracts/:id", deleteContract);
 router.get("/search/contracts", searchContracts);
 router.get("/search/archconts", searchArchContracts);
 
-router.get("/stats", getStatistics);
-
 router.patch("/:id/toggle", toggleArchive);
+
+router.get("/stats", getStatistics);
+router.get("/oldmon", getOldestMonth);
 
 
 module.exports = router;

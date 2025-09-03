@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 
 const officeContractSchema = new mongoose.Schema({
   floor: { type: Number, required: true }, // Этаж
-  area: { type: String, required: true }, // Квадратура (например, "24 м²")
+  area: { type: Number, required: true }, // Квадратура 
   officeNumber: { type: String, required: true }, // Кабинет
   company: { type: String, required: true }, // Компания
   link: { type: String }, // ССылка
