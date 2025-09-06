@@ -5,24 +5,6 @@ const taxSchema = new mongoose.Schema({
         type: Number,
         required: true,
       },
-      month: {
-        type: String, // Январь, Февраль и т.д.
-        required: true,
-        enum: [
-          "Январь",
-          "Февраль",
-          "Март",
-          "Апрель",
-          "Май",
-          "Июнь",
-          "Июль",
-          "Август",
-          "Сентябрь",
-          "Октябрь",
-          "Ноябрь",
-          "Декабрь",
-        ],
-    },
     totalTax: {
       type: Number,
       required: true

@@ -8,28 +8,7 @@ const accrualSchema = new mongoose.Schema(
       ref: "Contract",
       required: true,
     },
-    year: {
-      type: Number,
-      required: true,
-    },
-    month: {
-      type: String, // Январь, Февраль и т.д.
-      required: true,
-      enum: [
-        "Январь",
-        "Февраль",
-        "Март",
-        "Апрель",
-        "Май",
-        "Июнь",
-        "Июль",
-        "Август",
-        "Сентябрь",
-        "Октябрь",
-        "Ноябрь",
-        "Декабрь",
-      ],
-    },
+    date: { type: Date, required: true },
     contractAmount: { type: Number, required: true },
     accrualAmount: {
       type: Number, // начисление

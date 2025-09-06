@@ -55,35 +55,37 @@ const getAllContracts = async (req, res) => {
 const addPayment = async (req, res) => {
   try {
     const { id } = req.params;
-    const { contractId, amount } = req.body;
+    const { contractId, amount, name } = req.body;
+
+    if (!amount) {
+      return res.status(400).json({ message: "amount обязателен" });
+    }
 
     let images = [];
     if (req.files && req.files.length > 0) {
       images = req.files.map((file) => `/uploads/${file.filename}`);
     }
 
-    if (!contractId || !amount) {
-      return res.status(400).json({ message: "contractId и amount обязательны" });
-    }
+    let paymentData = { amount, images };
 
-    const contract = await Contracts.findById(contractId);
-    if (!contract) {
-      return res.status(404).json({ message: "Договор не найден" });
+    if (contractId) {
+      const contract = await Contracts.findById(contractId);
+      if (!contract) {
+        return res.status(404).json({ message: "Договор не найден" });
+      }
+      paymentData.contractId = contractId;
+      paymentData.name = contract.company;
+    } else if (name) {
+      // Пользователь сам вводит название, если нет договора
+      paymentData.contractId = null;
+      paymentData.name = name;
+    } else {
+      return res.status(400).json({ message: "Нужно указать либо contractId, либо name" });
     }
-
 
     const updatedDoc = await Electrcy.findByIdAndUpdate(
       id,
-      {
-        $push: {
-          paymentAmount: {
-            contractId,
-            name: contract.company,
-            amount,
-            images,
-          },
-        },
-      },
+      { $push: { paymentAmount: paymentData } },
       { new: true }
     );
 
@@ -100,6 +102,7 @@ const addPayment = async (req, res) => {
     res.status(500).json({ message: "Внутренняя ошибка сервера" });
   }
 };
+
 
 // ✅ Получить один платеж
 const getOnePayment = async (req, res) => {

@@ -103,7 +103,7 @@ const checkAvailableAmount = async (req, res) => {
 // POST /accruals — создать начисление с проверкой
 const createAccrual = async (req, res) => {
   try {
-    const { contractId, year, month, accrualAmount } = req.body;
+    const { contractId, date, accrualAmount } = req.body;
 
     // Валидация входных данных
     if (!contractId) {
@@ -113,10 +113,10 @@ const createAccrual = async (req, res) => {
       });
     }
 
-    if (!year || !month) {
+    if (!date) {
       return res.status(400).json({
         success: false,
-        message: "Год и месяц обязательны"
+        message: "Дата обязательно"
       });
     }
 
@@ -161,7 +161,7 @@ const createAccrual = async (req, res) => {
 // PUT /accruals/:id — обновить начисление с проверкой
 const updateAccrual = async (req, res) => {
   try {
-    const { year, month, accrualAmount, contractId } = req.body;
+    const { date, accrualAmount, contractId } = req.body;
 
     // Проверка обязательных данных
     if (!contractId) {
@@ -171,10 +171,10 @@ const updateAccrual = async (req, res) => {
       });
     }
 
-    if (!year || !month) {
+    if (!date) {
       return res.status(400).json({
         success: false,
-        message: "Год и месяц обязательны"
+        message: "Дата обязательна"
       });
     }
 

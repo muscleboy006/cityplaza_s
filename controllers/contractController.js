@@ -1,4 +1,3 @@
-// controllers/contractsController.js
 const Accrual = require("../models/Accrual");
 const Contract = require("../models/Contracts");
 
@@ -9,51 +8,39 @@ const getAllContractsNotArch = async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const year = parseInt(req.query.year); // Получаем год из query параметров
 
-    // Базовый запрос для контрактов
-    // let contractQuery = {};
-     // Базовый запрос для контрактов - исключаем архивные
-     let contractQuery = {
+    // Базовый запрос для контрактов - исключаем архивные
+    let contractQuery = {
       isArchive: { $ne: true } // Исключаем архивные контракты
     };
     
     // Если год указан, добавляем фильтрацию
-    if (year) {
-      const startOfYear = new Date(year, 0, 1); // 1 января указанного года
-      const endOfYear = new Date(year + 1, 0, 1); // 1 января следующего года
-      
+    if (Number.isInteger(year)) {
+      const startOfYear = new Date(year, 0, 1);       // 01 Jan YYYY, 00:00
+      const endOfYear   = new Date(year + 1, 0, 1);   // 01 Jan (YYYY+1), 00:00 (эксклюзивная граница)
+    
       contractQuery = {
         isArchive: { $ne: true },
+        moveInDate: { $lt: endOfYear },
         $or: [
-          // Контракты, которые начались в указанном году
-          {
-            moveInDate: {
-              $gte: startOfYear,
-              $lt: endOfYear
-            }
-          },
-          // Контракты, которые были активны в указанном году
-          {
-            moveInDate: { $lt: endOfYear },
-            $or: [
-              { moveOutDate: { $gte: startOfYear } },
-              { moveOutDate: null } // Контракты без даты окончания (текущие)
-            ]
-          }
+          { moveOutDate: { $gte: startOfYear } },
+          { moveOutDate: { $exists: false } },
+          { moveOutDate: null }
         ]
       };
     }
+    
 
     const contracts = await Contract.find(contractQuery)
       .skip((page - 1) * limit)
       .limit(limit)
-      .sort({ createdAt: -1 });
+      .sort({ floor: 1 });
 
     // ===== Вспомогательные функции =====
     function daysInMonth(year, month) {
       return new Date(year, month + 1, 0).getDate();
     }
 
-    function calculateAccrual(moveInDate, moveOutDate, monthlyAmount, filterYear = null) {
+    function calculateAccrual(moveInDate, moveOutDate, monthlyAmount, filterYear = null, filterMonth = null) {
       if (!moveInDate) return 0;
 
       const today = new Date();
@@ -62,15 +49,13 @@ const getAllContractsNotArch = async (req, res) => {
 
       // Если указан год для фильтрации, ограничиваем расчет этим годом
       if (filterYear) {
-        const yearStart = new Date(filterYear, 0, 1);
-        const yearEnd = new Date(filterYear + 1, 0, 1);
+        const yearStart = new Date(filterYear, filterMonth ? filterMonth - 1 : 0, 1);
+        const yearEnd = new Date(filterYear, filterMonth ? filterMonth : 12, 1);
         
-        // Если контракт начался позже конца года или закончился до начала года
         if (start >= yearEnd || end < yearStart) return 0;
         
-        // Ограничиваем период расчета указанным годом
         start = start < yearStart ? yearStart : start;
-        end = end > yearEnd ? new Date(yearEnd.getTime() - 1) : end; // -1 мс, чтобы не включать первый день следующего года
+        end = end > yearEnd ? new Date(yearEnd.getTime() - 1) : end;
       }
 
       if (end < start) return 0;
@@ -97,17 +82,17 @@ const getAllContractsNotArch = async (req, res) => {
     ).sort({ moveInDate: 1 });
 
     const oldestAccrual = await Accrual.findOne(
-      { year: { $exists: true, $ne: null } },
-      { year: 1 }
-    ).sort({ year: 1 });
+      { date: { $exists: true, $ne: null } },
+      { date: 1 }
+    ).sort({ date: 1 });
 
     // Определяем самый старый год из контрактов и начислений
     let oldestYear = null;
     if (oldestContract && oldestContract.moveInDate) {
       oldestYear = new Date(oldestContract.moveInDate).getFullYear();
     }
-    if (oldestAccrual && oldestAccrual.year) {
-      const accrualYear = oldestAccrual.year;
+    if (oldestAccrual && oldestAccrual.date) {
+      const accrualYear = new Date(oldestAccrual.date).getFullYear();
       oldestYear = oldestYear ? Math.min(oldestYear, accrualYear) : accrualYear;
     }
 
@@ -128,17 +113,19 @@ const getAllContractsNotArch = async (req, res) => {
       
       // Если указан год, фильтруем начисления по году
       if (year) {
-        accrualQuery.year = year;
+        const startOfYear = new Date(year, 0, 1);
+        const endOfYear = new Date(year + 1, 0, 1);
+        accrualQuery.date = { $gte: startOfYear, $lt: endOfYear };
       }
 
       // все начисления (для расчётов)
       const allAccruals = await Accrual.find(accrualQuery)
-        .sort({ year: 1, month: 1, createdAt: 1 });
+        .sort({ date: 1 });
 
       // только часть начислений (для списка)
       const accruals = await Accrual.find(accrualQuery)
-        .limit(10) // например, 10 последних начислений
-        .sort({ createdAt: -1 });
+        .limit(10)
+        .sort({ date: -1 });
 
       const totalPayments = allAccruals.reduce((sum, acc) => sum + (acc.accrualAmount || 0), 0);
 
@@ -147,7 +134,6 @@ const getAllContractsNotArch = async (req, res) => {
         contract.moveInDate,
         contract.moveOutDate,
         contract.contractAmountMinus12 || 0,
-        year // Передаем год для фильтрации расчета
       );
 
       const debt = totalAccruals - totalPayments;
@@ -194,36 +180,23 @@ const getAllContractsArch = async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const year = parseInt(req.query.year); // Получаем год из query параметров
 
-    // Базовый запрос для контрактов
-    // let contractQuery = {};
-     // Базовый запрос для контрактов - исключаем архивные
-     let contractQuery = {
-      isArchive: { $ne: false } // Исключаем архивные контракты
+    // Базовый запрос для контрактов - только архивные
+    let contractQuery = {
+      isArchive: true
     };
     
     // Если год указан, добавляем фильтрацию
-    if (year) {
-      const startOfYear = new Date(year, 0, 1); // 1 января указанного года
-      const endOfYear = new Date(year + 1, 0, 1); // 1 января следующего года
-      
+    if (Number.isInteger(year)) {
+      const startOfYear = new Date(year, 0, 1);       // 01 Jan YYYY, 00:00
+      const endOfYear   = new Date(year + 1, 0, 1);   // 01 Jan (YYYY+1), 00:00 (эксклюзивная граница)
+    
       contractQuery = {
-        isArchive: { $ne: false },
+        isArchive: true,
+        moveInDate: { $lt: endOfYear },
         $or: [
-          // Контракты, которые начались в указанном году
-          {
-            moveInDate: {
-              $gte: startOfYear,
-              $lt: endOfYear
-            }
-          },
-          // Контракты, которые были активны в указанном году
-          {
-            moveInDate: { $lt: endOfYear },
-            $or: [
-              { moveOutDate: { $gte: startOfYear } },
-              { moveOutDate: null } // Контракты без даты окончания (текущие)
-            ]
-          }
+          { moveOutDate: { $gte: startOfYear } },
+          { moveOutDate: { $exists: false } },
+          { moveOutDate: null }
         ]
       };
     }
@@ -231,31 +204,28 @@ const getAllContractsArch = async (req, res) => {
     const contracts = await Contract.find(contractQuery)
       .skip((page - 1) * limit)
       .limit(limit)
-      .sort({ createdAt: -1 });
+      .sort({ floor: 1 });
 
     // ===== Вспомогательные функции =====
     function daysInMonth(year, month) {
       return new Date(year, month + 1, 0).getDate();
     }
 
-    function calculateAccrual(moveInDate, moveOutDate, monthlyAmount, filterYear = null) {
+    function calculateAccrual(moveInDate, moveOutDate, monthlyAmount, filterYear = null, filterMonth = null) {
       if (!moveInDate) return 0;
 
       const today = new Date();
       let start = new Date(moveInDate);
       let end = moveOutDate ? new Date(moveOutDate) : today;
 
-      // Если указан год для фильтрации, ограничиваем расчет этим годом
       if (filterYear) {
-        const yearStart = new Date(filterYear, 0, 1);
-        const yearEnd = new Date(filterYear + 1, 0, 1);
+        const yearStart = new Date(filterYear, filterMonth ? filterMonth - 1 : 0, 1);
+        const yearEnd = new Date(filterYear, filterMonth ? filterMonth : 12, 1);
         
-        // Если контракт начался позже конца года или закончился до начала года
         if (start >= yearEnd || end < yearStart) return 0;
         
-        // Ограничиваем период расчета указанным годом
         start = start < yearStart ? yearStart : start;
-        end = end > yearEnd ? new Date(yearEnd.getTime() - 1) : end; // -1 мс, чтобы не включать первый день следующего года
+        end = end > yearEnd ? new Date(yearEnd.getTime() - 1) : end;
       }
 
       if (end < start) return 0;
@@ -282,17 +252,17 @@ const getAllContractsArch = async (req, res) => {
     ).sort({ moveInDate: 1 });
 
     const oldestAccrual = await Accrual.findOne(
-      { year: { $exists: true, $ne: null } },
-      { year: 1 }
-    ).sort({ year: 1 });
+      { date: { $exists: true, $ne: null } },
+      { date: 1 }
+    ).sort({ date: 1 });
 
     // Определяем самый старый год из контрактов и начислений
     let oldestYear = null;
     if (oldestContract && oldestContract.moveInDate) {
       oldestYear = new Date(oldestContract.moveInDate).getFullYear();
     }
-    if (oldestAccrual && oldestAccrual.year) {
-      const accrualYear = oldestAccrual.year;
+    if (oldestAccrual && oldestAccrual.date) {
+      const accrualYear = new Date(oldestAccrual.date).getFullYear();
       oldestYear = oldestYear ? Math.min(oldestYear, accrualYear) : accrualYear;
     }
 
@@ -313,17 +283,19 @@ const getAllContractsArch = async (req, res) => {
       
       // Если указан год, фильтруем начисления по году
       if (year) {
-        accrualQuery.year = year;
+        const startOfYear = new Date(year, 0, 1);
+        const endOfYear = new Date(year + 1, 0, 1);
+        accrualQuery.date = { $gte: startOfYear, $lt: endOfYear };
       }
 
       // все начисления (для расчётов)
       const allAccruals = await Accrual.find(accrualQuery)
-        .sort({ year: 1, month: 1, createdAt: 1 });
+        .sort({ date: 1 });
 
       // только часть начислений (для списка)
       const accruals = await Accrual.find(accrualQuery)
-        .limit(10) // например, 10 последних начислений
-        .sort({ createdAt: -1 });
+        .limit(10)
+        .sort({ date: -1 });
 
       const totalPayments = allAccruals.reduce((sum, acc) => sum + (acc.accrualAmount || 0), 0);
 
@@ -332,7 +304,6 @@ const getAllContractsArch = async (req, res) => {
         contract.moveInDate,
         contract.moveOutDate,
         contract.contractAmountMinus12 || 0,
-        year // Передаем год для фильтрации расчета
       );
 
       const debt = totalAccruals - totalPayments;
@@ -414,7 +385,6 @@ const getOneContract = async (req, res) => {
   }
 };
 
-
 // PUT /contracts/:id — обновить контракт
 const updateContract = async (req, res) => {
   try {
@@ -463,7 +433,7 @@ function daysInMonth(year, month) {
   return new Date(year, month + 1, 0).getDate();
 }
 
-function calculateAccrual(moveInDate, moveOutDate, monthlyAmount, filterYear = null) {
+function calculateAccrual(moveInDate, moveOutDate, monthlyAmount, filterYear = null, filterMonth = null) {
   if (!moveInDate) return 0;
 
   const today = new Date();
@@ -471,8 +441,8 @@ function calculateAccrual(moveInDate, moveOutDate, monthlyAmount, filterYear = n
   let end = moveOutDate ? new Date(moveOutDate) : today;
 
   if (filterYear) {
-    const yearStart = new Date(filterYear, 0, 1);
-    const yearEnd = new Date(filterYear + 1, 0, 1);
+    const yearStart = new Date(filterYear, filterMonth ? filterMonth - 1 : 0, 1);
+    const yearEnd = new Date(filterYear, filterMonth ? filterMonth : 12, 1);
 
     if (start >= yearEnd || end < yearStart) return 0;
 
@@ -499,10 +469,14 @@ function calculateAccrual(moveInDate, moveOutDate, monthlyAmount, filterYear = n
 
 async function processContract(contract, year = null) {
   let accrualQuery = { contractId: contract._id };
-  if (year) accrualQuery.year = year;
+  if (year) {
+    const startOfYear = new Date(year, 0, 1);
+    const endOfYear = new Date(year + 1, 0, 1);
+    accrualQuery.date = { $gte: startOfYear, $lt: endOfYear };
+  }
 
-  const allAccruals = await Accrual.find(accrualQuery).sort({ year: 1, month: 1, createdAt: 1 });
-  const accruals = await Accrual.find(accrualQuery).limit(10).sort({ createdAt: -1 });
+  const allAccruals = await Accrual.find(accrualQuery).sort({ date: 1 });
+  const accruals = await Accrual.find(accrualQuery).limit(10).sort({ date: -1 });
 
   const totalPayments = allAccruals.reduce((sum, acc) => sum + (acc.accrualAmount || 0), 0);
   const totalAccruals = calculateAccrual(
@@ -534,7 +508,6 @@ const searchContracts = async (req, res) => {
 
     const searchRegex = new RegExp(query, "i");
 
-    // const contracts = await Contract.find({ company: searchRegex }).sort({ createdAt: -1 });
     const contracts = await Contract.find({
       company: searchRegex,
       isArchive: false
@@ -570,7 +543,6 @@ const searchArchContracts = async (req, res) => {
 
     const searchRegex = new RegExp(query, "i");
 
-    // const contracts = await Contract.find({ company: searchRegex }).sort({ createdAt: -1 });
     const contracts = await Contract.find({
       company: searchRegex,
       isArchive: true
@@ -595,7 +567,6 @@ const searchArchContracts = async (req, res) => {
     });
   }
 };
-
 
 const toggleArchive = async (req, res) => {
   try {
@@ -622,66 +593,6 @@ const toggleArchive = async (req, res) => {
   }
 };
 
-// Маппинг числовых месяцев на строковые названия
-const monthNameMap = {
-  1: "Январь",
-  2: "Февраль",
-  3: "Март",
-  4: "Апрель",
-  5: "Май",
-  6: "Июнь",
-  7: "Июль",
-  8: "Август",
-  9: "Сентябрь",
-  10: "Октябрь",
-  11: "Ноябрь",
-  12: "Декабрь"
-};
-
-// Обновленная функция calculateAccrual для поддержки строковых месяцев
-function calculateAccrual(moveInDate, moveOutDate, monthlyAmount, filterYear = null, filterMonth = null) {
-  if (!moveInDate) return 0;
-
-  const today = new Date();
-  let start = new Date(moveInDate);
-  let end = moveOutDate ? new Date(moveOutDate) : today;
-
-  if (filterYear) {
-    // Если filterMonth передан как число, преобразуем в строковое название
-    const monthName = typeof filterMonth === 'number' ? monthNameMap[filterMonth] : filterMonth;
-    let periodStart = new Date(filterYear, 0, 1);
-    let periodEnd = new Date(filterYear + 1, 0, 1);
-
-    if (monthName) {
-      const monthIndex = Object.values(monthNameMap).indexOf(monthName);
-      if (monthIndex === -1) return 0; // Неверное название месяца
-      periodStart = new Date(filterYear, monthIndex, 1);
-      periodEnd = new Date(filterYear, monthIndex + 1, 1);
-    }
-
-    if (start >= periodEnd || end < periodStart) return 0;
-
-    start = start < periodStart ? periodStart : start;
-    end = end > periodEnd ? new Date(periodEnd.getTime() - 1) : end;
-  }
-
-  if (end < start) return 0;
-
-  if (start.getFullYear() === end.getFullYear() && start.getMonth() === end.getMonth()) {
-    return ((end.getDate() - start.getDate() + 1) / daysInMonth(start.getFullYear(), start.getMonth())) * monthlyAmount;
-  }
-
-  const fullMonths = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth()) - 1;
-
-  const firstMonthDays = daysInMonth(start.getFullYear(), start.getMonth());
-  const firstMonthAccrual = ((firstMonthDays - start.getDate() + 1) / firstMonthDays) * monthlyAmount;
-
-  const lastMonthDays = daysInMonth(end.getFullYear(), end.getMonth());
-  const lastMonthAccrual = (end.getDate() / lastMonthDays) * monthlyAmount;
-
-  return firstMonthAccrual + (fullMonths > 0 ? fullMonths * monthlyAmount : 0) + lastMonthAccrual;
-}
-
 const getOldestMonth = async (req, res) => {
   try {
     // Находим самый старый контракт по moveInDate
@@ -690,11 +601,11 @@ const getOldestMonth = async (req, res) => {
       { moveInDate: 1 }
     ).sort({ moveInDate: 1 });
 
-    // Находим самое старое начисление по году и месяцу
+    // Находим самое старое начисление по date
     const oldestAccrual = await Accrual.findOne(
-      { year: { $exists: true, $ne: null }, month: { $exists: true, $ne: null } },
-      { year: 1, month: 1 }
-    ).sort({ year: 1 }); // Сортируем только по году, так как месяц строка
+      { date: { $exists: true, $ne: null } },
+      { date: 1 }
+    ).sort({ date: 1 });
 
     let oldestYear = null;
     let oldestMonth = null;
@@ -703,22 +614,22 @@ const getOldestMonth = async (req, res) => {
     if (oldestContract && oldestContract.moveInDate) {
       const contractDate = new Date(oldestContract.moveInDate);
       oldestYear = contractDate.getFullYear();
-      oldestMonth = contractDate.getMonth() + 1; // Месяц в JS начинается с 0, добавляем 1
+      oldestMonth = contractDate.getMonth() + 1;
     }
 
     // Сравниваем с начислениями, если они есть
-    if (oldestAccrual && oldestAccrual.year && oldestAccrual.month) {
-      const accrualYear = oldestAccrual.year;
-      const monthIndex = Object.values(monthNameMap).indexOf(oldestAccrual.month) + 1;
+    if (oldestAccrual && oldestAccrual.date) {
+      const accrualDate = new Date(oldestAccrual.date);
+      const accrualYear = accrualDate.getFullYear();
+      const accrualMonth = accrualDate.getMonth() + 1;
 
-      // Проверяем, является ли начисление более старым
       if (
         !oldestYear ||
         accrualYear < oldestYear ||
-        (accrualYear === oldestYear && monthIndex < oldestMonth)
+        (accrualYear === oldestYear && accrualMonth < oldestMonth)
       ) {
         oldestYear = accrualYear;
-        oldestMonth = monthIndex;
+        oldestMonth = accrualMonth;
       }
     }
 
@@ -734,7 +645,6 @@ const getOldestMonth = async (req, res) => {
       data: {
         year: oldestYear,
         month: oldestMonth,
-        monthName: monthNameMap[oldestMonth],
       },
     });
   } catch (error) {
@@ -751,7 +661,7 @@ const getStatistics = async (req, res) => {
   try {
     const now = new Date();
     const currentYear = now.getFullYear();
-    const currentMonth = now.getMonth() + 1; // JS month 0-11
+    const currentMonth = now.getMonth() + 1;
     const prevMonth = currentMonth === 1 ? 12 : currentMonth - 1;
     const prevMonthYear = currentMonth === 1 ? currentYear - 1 : currentYear;
 
@@ -795,10 +705,7 @@ const getStatistics = async (req, res) => {
     for (const contract of allContracts) {
       const accrualsToDate = await Accrual.find({
         contractId: contract._id,
-        $or: [
-          { year: { $lt: currentYear } },
-          { year: currentYear, month: { $lte: currentMonth } },
-        ],
+        date: { $lte: new Date(currentYear, currentMonth - 1, 1) },
       });
 
       const paidToDate = accrualsToDate.reduce(
@@ -819,9 +726,10 @@ const getStatistics = async (req, res) => {
     totalDebt = Number(totalDebt.toFixed(2));
 
     // --- 3) Платежи за прошлый месяц ---
+    const prevMonthStart = new Date(prevMonthYear, prevMonth - 1, 1);
+    const prevMonthEnd = new Date(prevMonthYear, prevMonth, 1);
     const accrualsPrevMonth = await Accrual.find({
-      year: prevMonthYear,
-      month: monthNameMap[prevMonth],
+      date: { $gte: prevMonthStart, $lt: prevMonthEnd },
     });
     const paymentsPrevMonth = accrualsPrevMonth.reduce(
       (s, a) => s + (parseFloat(a.accrualAmount) || 0),
@@ -829,7 +737,11 @@ const getStatistics = async (req, res) => {
     );
 
     // --- 4) Платежи за текущий год ---
-    const accrualsThisYear = await Accrual.find({ year: currentYear });
+    const yearStart = new Date(currentYear, 0, 1);
+    const yearEnd = new Date(currentYear + 1, 0, 1);
+    const accrualsThisYear = await Accrual.find({
+      date: { $gte: yearStart, $lt: yearEnd },
+    });
     const paymentsThisYear = accrualsThisYear.reduce(
       (s, a) => s + (parseFloat(a.accrualAmount) || 0),
       0
@@ -859,8 +771,6 @@ const getStatistics = async (req, res) => {
     });
   }
 };
-
-
 
 module.exports = {
   getAllContractsNotArch,
